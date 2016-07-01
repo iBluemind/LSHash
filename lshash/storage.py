@@ -13,6 +13,12 @@ try:
 except ImportError:
     redis = None
 
+try:
+    from elasticsearch import Elasticsearch
+except ImportError:
+    Elasticsearch = None
+
+
 __all__ = ['storage']
 
 
@@ -24,6 +30,8 @@ def storage(storage_config, index):
         return InMemoryStorage(storage_config['dict'])
     elif 'redis' in storage_config:
         return RedisStorage(storage_config['redis'], index)
+    elif 'es' in storage_config:
+        return ElasticSearchStorage(storage_config['es'])
     else:
         raise ValueError("Only in-memory dictionary and Redis are supported.")
 
@@ -92,4 +100,40 @@ class RedisStorage(BaseStorage):
             if len(el) == 2 and type(el[0]) == list:
                 el[0] = tuple(el[0])
         _list = [tuple(el) for el in _list]
+        return _list
+
+
+class ElasticSearchStorage(BaseStorage):
+    def __init__(self, config):
+        self.name = 'es'
+        self.index = config['index']
+        self.doc_type = config['doc_type']
+        self.storage = Elasticsearch(config['connections'])
+
+    def keys(self):
+        ids = helpers.scan(self.storage,
+             index=self.index,
+             doc_type=self.doc_type,
+             body={'fields': ['key'], "query": {"match_all": {}}})
+        return ids
+
+    def append_val(self, key, val):
+        extra = val[-1]
+        val = tuple([x for i, x in enumerate(val) if i+1 < len(val)])
+        body = {
+            'key': key,
+            'val': val,
+            'extra': extra
+        }
+        self.storage.index(self.index, self.doc_type, json.dumps(body))
+
+    def get_list(self, key):
+        res = self.storage.search(self.index, self.doc_type, {'query': {'match': {'key': key}}})
+        _list = []
+        for hit in res['hits']['hits']:
+            val = hit['_source']['val']
+            extra = hit['_source']['extra']
+            if extra and type(val[0]) == list:
+                val[0] = tuple(val[0])
+            _list.append((val[0], extra))
         return _list
