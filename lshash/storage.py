@@ -57,6 +57,9 @@ class BaseStorage(object):
         """
         raise NotImplementedError
 
+    def bulk(self, data):
+        raise NotImplementedError
+
 
 class InMemoryStorage(BaseStorage):
     def __init__(self, h_index):
@@ -126,6 +129,9 @@ class ElasticSearchStorage(BaseStorage):
             'extra': extra
         }
         self.storage.index(self.index, self.doc_type, json.dumps(body))
+
+    def bulk(self, data):
+        self.storage.bulk(index=self.index, body=data, refresh=True)
 
     def get_list(self, key):
         res = self.storage.search(self.index, self.doc_type, {'query': {'match': {'key': key}}})
