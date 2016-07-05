@@ -181,6 +181,22 @@ class LSHash(object):
         else:
             raise TypeError("query data is not supported")
 
+    def code(self, input_point):
+        """ Calculate LSH code for a single input point. Returns one code of
+        length `hash_size` for each `hash_table`.
+        :param input_point:
+            A list, or tuple, or numpy ndarray object that contains numbers
+            only. The dimension needs to be 1 * `input_dim`.
+            This object will be converted to Python tuple and stored in the
+            selected storage.
+        """
+
+        if isinstance(input_point, np.ndarray):
+            input_point = input_point.tolist()
+
+        return [self._hash(self.uniform_planes[i], input_point)
+                for i in xrange(self.num_hashtables)]
+
     def index(self, input_point, extra_data=None):
         """ Index a single input point by adding it to the selected storage.
 
@@ -199,6 +215,8 @@ class LSHash(object):
             basic types such as strings and integers.
         """
 
+        hashes = self.code(input_point)
+
         if isinstance(input_point, np.ndarray):
             input_point = input_point.tolist()
 
@@ -207,18 +225,21 @@ class LSHash(object):
         else:
             value = tuple(input_point)
 
-	bulk = self.storage_config.get('bulk')
-        if bulk:
-            hash_table = []
-            for i, table in enumerate(self.hash_tables):
-                hash_table.append(self._hash(self.uniform_planes[i], input_point),
-                                  value)
-            table.bulk(hash_table)
-        else:
-            for i, table in enumerate(self.hash_tables):
-                table.append_val(self._hash(self.uniform_planes[i], input_point),
-                                 value)
+        for i, table in enumerate(self.hash_tables):
+            table.append_val(hashes[i], value)
 
+    def bulk_index(self, input_points, extra_datas):
+        datas = []
+        for i, input_point in enumerate(input_points):
+            hashes = self.code(input_point)
+            if isinstance(input_point, np.ndarray):
+                input_point = input_point.tolist()
+            extra_data = extra_datas[i] if i < len(extra_datas) else None
+            for j in xrange(len(self.hash_tables)):
+                datas.append({'key': hashes[j], 'val': [tuple(input_point)],
+                              'extra': extra_data})
+        for table in self.hash_tables:
+            table.bulk(datas)
 
     def query(self, query_point, num_results=None, distance_func=None):
         """ Takes `query_point` which is either a tuple or a list of numbers,

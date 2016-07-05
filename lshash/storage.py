@@ -15,17 +15,16 @@ except ImportError:
 
 try:
     from elasticsearch import Elasticsearch
+    from elasticsearch import helpers
 except ImportError:
     Elasticsearch = None
+    helpers = None
 
 
 __all__ = ['storage']
 
 
 def storage(storage_config, index):
-    """ Given the configuration for storage and the index, return the
-    configured storage instance.
-    """
     if 'dict' in storage_config:
         return InMemoryStorage(storage_config['dict'])
     elif 'redis' in storage_config:
@@ -62,18 +61,19 @@ class BaseStorage(object):
 
 
 class InMemoryStorage(BaseStorage):
-    def __init__(self, h_index):
+    def __init__(self):
         self.name = 'dict'
-        self.storage = dict()
+        self.storage = []
 
     def keys(self):
-        return self.storage.keys()
+        return self.storage[index].keys()
 
     def append_val(self, key, val):
-        self.storage.setdefault(key, set()).update([val])
+        self.storage[index] = dict()
+        self.storage[index].setdefault(key, set()).update([val])
 
     def get_list(self, key):
-        return list(self.storage.get(key, []))
+        return list(self.storage[index].get(key, []))
 
 
 class RedisStorage(BaseStorage):
@@ -111,20 +111,18 @@ class ElasticSearchStorage(BaseStorage):
         self.name = 'es'
         self.index = config['index']
         self.doc_type = config['doc_type']
+        self.request_timeout = config.get('request_timeout')
         self.storage = Elasticsearch(config['connections'])
-        if config.get('refresh'):
-            self._remove_index(self.index)
 
     def _remove_index(self, index_name):
         if self.storage.indices.exists(index_name):
             self.storage.indices.delete(index=index_name)
 
     def keys(self):
-        ids = helpers.scan(self.storage,
-             index=self.index,
-             doc_type=self.doc_type,
-             body={'fields': ['key'], "query": {"match_all": {}}})
-        return ids
+        return helpers.scan(self.storage,
+                           index=self.index,
+                           doc_type=self.doc_type,
+                           body={'fields': ['key'], "query": {"match_all": {}}})
 
     def append_val(self, key, val):
         extra = val[-1]
@@ -134,10 +132,20 @@ class ElasticSearchStorage(BaseStorage):
             'val': val,
             'extra': extra
         }
-        self.storage.index(self.index, self.doc_type, json.dumps(body))
+        self.storage.index(self.index, self.doc_type, body=json.dumps(body))
 
-    def bulk(self, data):
-        self.storage.bulk(index=self.index, body=data, refresh=True)
+    def bulk(self, datas):
+        body = []
+        def get_op_dict(id, data):
+            return {
+                "_index": self.index,
+                "_type": self.doc_type,
+                "_id": id,
+                "_source": data
+            }
+        for i in xrange(len(datas)):
+            body.append(get_op_dict(i, datas[i]))
+        helpers.bulk(self.storage, body, chunk_size=len(body), request_timeout=self.request_timeout)
 
     def get_list(self, key):
         res = self.storage.search(self.index, self.doc_type, {'query': {'match': {'key': key}}})
@@ -149,3 +157,4 @@ class ElasticSearchStorage(BaseStorage):
                 val[0] = tuple(val[0])
             _list.append((val[0], extra))
         return _list
+
