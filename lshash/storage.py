@@ -112,6 +112,12 @@ class ElasticSearchStorage(BaseStorage):
         self.index = config['index']
         self.doc_type = config['doc_type']
         self.storage = Elasticsearch(config['connections'])
+        if config.get('refresh'):
+            self._remove_index(self.index)
+
+    def _remove_index(self, index_name):
+        if self.storage.indices.exists(index_name):
+            self.storage.indices.delete(index=index_name)
 
     def keys(self):
         ids = helpers.scan(self.storage,
